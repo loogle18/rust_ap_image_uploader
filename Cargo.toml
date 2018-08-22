@@ -6,3 +6,6 @@ authors = ["loogle18 <sviat.minato@gmail.com>"]
 [dependencies]
 rust-s3 = "0.9.2"
 clap = "2.31.2"
+mime_guess = "1.8.6"
+scoped_threadpool = "0.1.9"
+glob = "0.2.11"

@@ -1,12 +1,15 @@
 extern crate s3;
 extern crate clap;
 extern crate mime_guess;
+extern crate scoped_threadpool;
+extern crate glob;
 
-use std::env;
+use std::{str, env};
 use std::io::prelude::*;
-use std::{str, thread};
 use std::fs::{self, File};
 use std::path::Path;
+use glob::glob;
+use scoped_threadpool::Pool;
 use mime_guess::guess_mime_type;
 use s3::bucket::Bucket;
 use s3::credentials::Credentials;
@@ -57,22 +60,20 @@ fn get_space(space_name: &str) -> Bucket {
     return Bucket::new(space_name, region, credentials);
 }
 
-fn upload_files_from<'a>(dir: &Path, remove_after: bool, space: &'a Bucket, threads: &mut Vec<thread::JoinHandle<()>>) {
-    if dir.is_dir() {
-        for entry in fs::read_dir(dir).expect("Unable to list directory") {
-            let path = entry.expect("Unable to get entry from directory").path();
-            let mime_type = guess_mime_type(&path).to_string();
-            if path.is_dir() {
-                upload_files_from(&path, remove_after, &space, threads);
-            } else if mime_type.contains("image") {
-                let mut new_space = space.clone();
+fn upload_files_from<'a>(path: &Path, remove_after: bool, space: &'a Bucket) {
+    let mut pool = Pool::new(32);
 
-                threads.push(thread::spawn(move || {
-                    upload_file(&path, mime_type.as_str(), remove_after, &mut new_space);
-                }));
+    pool.scoped(|scoped| {
+        for filepath in glob(format!("{}/**/*", &path.to_str().unwrap()).as_str()).unwrap().filter_map(Result::ok) {
+            let mime_type = guess_mime_type(&filepath).to_string();
+            if mime_type.contains("image") {
+                let mut new_space = space.clone();
+                scoped.execute(move || {
+                    upload_file(&filepath, mime_type.as_str(), remove_after, &mut new_space);
+                });
             }
         }
-    }
+    });
 }
 
 fn upload_file(path: &Path, mime_type: &str, remove_after: bool, space: &mut Bucket) {
@@ -85,6 +86,7 @@ fn upload_file(path: &Path, mime_type: &str, remove_after: bool, space: &mut Buc
     file.read_to_end(&mut buffer).expect(format!("Unable to read file {}", filename).as_str());
     space.add_header("x-amz-acl", "public-read");
     space.put(key.as_str(), &buffer.as_slice(), mime_type).expect(format!("Unable to upload file {}", filename).as_str());
+
     println!("_{}/{}", foldername, filename);
 
     if remove_after {
@@ -97,14 +99,8 @@ fn main() {
     let path = Path::new(matches.value_of("path").unwrap());
     let space_name = matches.value_of("space_name").unwrap();
     let remove_after = matches.value_of("remove_after").unwrap().eq("true");
-    let mut threads: Vec<thread::JoinHandle<()>> = Vec::new();
-
     check_end_exit(!path.exists(), "Path is invalid");
-    upload_files_from(path, remove_after, &get_space(space_name), &mut threads);
-
-    for handle in threads {
-        handle.join();
-    }
+    upload_files_from(path, remove_after, &get_space(space_name));
 
     println!("Done!");
 }
