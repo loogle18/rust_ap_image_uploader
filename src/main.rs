@@ -101,11 +101,14 @@ fn upload_file(path: &Path, mime_type: &str, remove_after: bool, space: &Bucket)
 
     file.read_to_end(&mut buffer)
         .expect(format!("Unable to read file {}", key).as_str());
-    space
-        .put(key.as_str(), &buffer.as_slice(), mime_type)
-        .expect(format!("Unable to upload file {}", key).as_str());
+    let result = space.put(key.as_str(), &buffer.as_slice(), mime_type).ok();
 
-    println!("{}", key);
+    if result.is_none() {
+        println!("Unable to upload file {}", key);
+        return;
+    }
+
+    println!("Uploaded {}", key);
 
     if remove_after {
         fs::remove_file(path).expect(format!("Unable to delete file {}", key).as_str());
