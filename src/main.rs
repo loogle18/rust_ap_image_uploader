@@ -1,20 +1,20 @@
-extern crate s3;
 extern crate clap;
-extern crate mime_guess;
-extern crate scoped_threadpool;
 extern crate glob;
+extern crate mime_guess;
 extern crate num_cpus;
+extern crate s3;
+extern crate scoped_threadpool;
 
-use std::{str, env};
-use std::io::prelude::Read;
-use std::fs::{self, File};
-use std::path::Path;
+use clap::{App, Arg, ArgMatches};
 use glob::glob;
-use scoped_threadpool::Pool;
 use mime_guess::guess_mime_type;
 use s3::bucket::Bucket;
 use s3::credentials::Credentials;
-use clap::{Arg, App, ArgMatches};
+use scoped_threadpool::Pool;
+use std::fs::{self, File};
+use std::io::prelude::Read;
+use std::path::Path;
+use std::{env, str};
 
 fn check_end_exit(condition: bool, message: &str) {
     if condition {
@@ -25,35 +25,41 @@ fn check_end_exit(condition: bool, message: &str) {
 
 fn get_matches<'a>() -> ArgMatches<'a> {
     return App::new("DO image uploader")
-                    .version("1.0")
-                    .author("Sviat M. <sviat.minato@gmail.com>")
-                    .about("Upload images to DO space")
-                    .arg(Arg::with_name("space_name")
-                         .short("n")
-                         .long("space_name")
-                         .help("Name of the DO space")
-                         .takes_value(true)
-                         .required(true))
-                    .arg(Arg::with_name("path")
-                         .short("p")
-                         .long("path")
-                         .help("Path to images folder.")
-                         .takes_value(true)
-                         .required(true))
-                    .arg(Arg::with_name("remove_after")
-                         .short("r")
-                         .long("remove_after")
-                         .help("Remove files after upload")
-                         .default_value("false")
-                         .possible_values(&["true", "false"]))
-                    .get_matches();
+        .version("1.0")
+        .author("Sviat M. <sviat.minato@gmail.com>")
+        .about("Upload images to DO space")
+        .arg(
+            Arg::with_name("space_name")
+                .short("n")
+                .long("space_name")
+                .help("Name of the DO space")
+                .takes_value(true)
+                .required(true),
+        ).arg(
+            Arg::with_name("path")
+                .short("p")
+                .long("path")
+                .help("Path to images folder.")
+                .takes_value(true)
+                .required(true),
+        ).arg(
+            Arg::with_name("remove_after")
+                .short("r")
+                .long("remove_after")
+                .help("Remove files after upload")
+                .default_value("false")
+                .possible_values(&["true", "false"]),
+        ).get_matches();
 }
 
 fn get_space(space_name: &str) -> Bucket {
     let access_key = env::var("DO_ACCESS_KEY_ID").ok();
     let secret_key = env::var("DO_SECRET_ACCESS_KEY").ok();
 
-    check_end_exit(access_key.is_none() || secret_key.is_none(), "DO_ACCESS_KEY_ID or DO_SECRET_ACCESS_KEY is missing");
+    check_end_exit(
+        access_key.is_none() || secret_key.is_none(),
+        "DO_ACCESS_KEY_ID or DO_SECRET_ACCESS_KEY is missing",
+    );
 
     let credentials = Credentials::new(access_key, secret_key, None, Some("default".to_string()));
     let region = "nyc3".parse().unwrap();
@@ -66,7 +72,10 @@ fn upload_files_from<'a>(path: &Path, remove_after: bool, space: &'a Bucket) {
     let mut pool = Pool::new(pool_number);
 
     pool.scoped(|scoped| {
-        for filepath in glob(format!("{}/**/*", &path.to_str().unwrap()).as_str()).unwrap().filter_map(Result::ok) {
+        for filepath in glob(format!("{}/**/*", &path.to_str().unwrap()).as_str())
+            .unwrap()
+            .filter_map(Result::ok)
+        {
             let mime_type = guess_mime_type(&filepath).to_string();
             if mime_type.contains("image") {
                 scoped.execute(move || {
@@ -79,13 +88,22 @@ fn upload_files_from<'a>(path: &Path, remove_after: bool, space: &'a Bucket) {
 
 fn upload_file(path: &Path, mime_type: &str, remove_after: bool, space: &Bucket) {
     let filename = path.file_name().unwrap().to_str().unwrap();
-    let foldername = path.parent().unwrap().file_name().unwrap().to_str().unwrap();
+    let foldername = path
+        .parent()
+        .unwrap()
+        .file_name()
+        .unwrap()
+        .to_str()
+        .unwrap();
     let key = format!("_{}/{}", foldername, filename);
     let mut file = File::open(path).expect("Unable to read file");
     let mut buffer = Vec::new();
 
-    file.read_to_end(&mut buffer).expect(format!("Unable to read file {}", key).as_str());
-    space.put(key.as_str(), &buffer.as_slice(), mime_type).expect(format!("Unable to upload file {}", key).as_str());
+    file.read_to_end(&mut buffer)
+        .expect(format!("Unable to read file {}", key).as_str());
+    space
+        .put(key.as_str(), &buffer.as_slice(), mime_type)
+        .expect(format!("Unable to upload file {}", key).as_str());
 
     println!("{}", key);
 
