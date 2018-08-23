@@ -3,9 +3,10 @@ extern crate clap;
 extern crate mime_guess;
 extern crate scoped_threadpool;
 extern crate glob;
+extern crate num_cpus;
 
 use std::{str, env};
-use std::io::prelude::*;
+use std::io::prelude::Read;
 use std::fs::{self, File};
 use std::path::Path;
 use glob::glob;
@@ -61,36 +62,35 @@ fn get_space(space_name: &str) -> Bucket {
 }
 
 fn upload_files_from<'a>(path: &Path, remove_after: bool, space: &'a Bucket) {
-    let mut pool = Pool::new(32);
+    let pool_number = (num_cpus::get() as u32) * 4;
+    let mut pool = Pool::new(pool_number);
 
     pool.scoped(|scoped| {
         for filepath in glob(format!("{}/**/*", &path.to_str().unwrap()).as_str()).unwrap().filter_map(Result::ok) {
             let mime_type = guess_mime_type(&filepath).to_string();
             if mime_type.contains("image") {
-                let mut new_space = space.clone();
                 scoped.execute(move || {
-                    upload_file(&filepath, mime_type.as_str(), remove_after, &mut new_space);
+                    upload_file(&filepath, mime_type.as_str(), remove_after, &space);
                 });
             }
         }
     });
 }
 
-fn upload_file(path: &Path, mime_type: &str, remove_after: bool, space: &mut Bucket) {
+fn upload_file(path: &Path, mime_type: &str, remove_after: bool, space: &Bucket) {
     let filename = path.file_name().unwrap().to_str().unwrap();
     let foldername = path.parent().unwrap().file_name().unwrap().to_str().unwrap();
     let key = format!("_{}/{}", foldername, filename);
     let mut file = File::open(path).expect("Unable to read file");
     let mut buffer = Vec::new();
 
-    file.read_to_end(&mut buffer).expect(format!("Unable to read file {}", filename).as_str());
-    space.add_header("x-amz-acl", "public-read");
-    space.put(key.as_str(), &buffer.as_slice(), mime_type).expect(format!("Unable to upload file {}", filename).as_str());
+    file.read_to_end(&mut buffer).expect(format!("Unable to read file {}", key).as_str());
+    space.put(key.as_str(), &buffer.as_slice(), mime_type).expect(format!("Unable to upload file {}", key).as_str());
 
-    println!("_{}/{}", foldername, filename);
+    println!("{}", key);
 
     if remove_after {
-        fs::remove_file(path).expect(format!("Unable to delete file {}", filename).as_str());
+        fs::remove_file(path).expect(format!("Unable to delete file {}", key).as_str());
     }
 }
 
@@ -99,8 +99,11 @@ fn main() {
     let path = Path::new(matches.value_of("path").unwrap());
     let space_name = matches.value_of("space_name").unwrap();
     let remove_after = matches.value_of("remove_after").unwrap().eq("true");
+    let mut space = get_space(space_name);
+    space.add_header("x-amz-acl", "public-read");
+
     check_end_exit(!path.exists(), "Path is invalid");
-    upload_files_from(path, remove_after, &get_space(space_name));
+    upload_files_from(path, remove_after, &space);
 
     println!("Done!");
 }
